@@ -12,7 +12,6 @@ import dowhy.utils.cli_helpers as cli
 from dowhy.causal_estimator import CausalEstimate
 from dowhy.causal_graph import CausalGraph
 from dowhy.causal_identifier import CausalIdentifier
-from dowhy.causal_identifiers.id_identifier import IDIdentifier
 from dowhy.utils.api import parse_state
 from dowhy.causal_refuters.graph_refuter import GraphRefuter
 
@@ -185,18 +184,11 @@ class CausalModel:
         if estimand_type is None:
             estimand_type = self._estimand_type
 
-        if method_name == "id-algorithm":
-            self.identifier = IDIdentifier(self._graph,
+        self.identifier = CausalIdentifier(self._graph,
                                            estimand_type,
                                            method_name,
                                            proceed_when_unidentifiable=proceed_when_unidentifiable)
-            identified_estimand = self.identifier.identify_effect()
-        else:
-            self.identifier = CausalIdentifier(self._graph,
-                                               estimand_type,
-                                               method_name,
-                                               proceed_when_unidentifiable=proceed_when_unidentifiable)
-            identified_estimand = self.identifier.identify_effect(optimize_backdoor=optimize_backdoor)
+        identified_estimand = self.identifier.identify_effect(optimize_backdoor=optimize_backdoor)
 
         return identified_estimand
 
@@ -462,19 +454,19 @@ class CausalModel:
 
     def refute_graph(self, k= 1, method_name =None, independence_constraints = None ):
         """
-        Check if the dependencies in input graph matches with the dataset - 
-        ( X ⫫ Y ) | Z 
+        Check if the dependencies in input graph matches with the dataset -
+        ( X ⫫ Y ) | Z
         where X and Y are considered as singleton sets currently
         Z can have multiple variables
-        :param k: number of covariates in set Z 
+        :param k: number of covariates in set Z
         :param method_name: name of method to test conditional independece in data
-        :param independence_constraints: list of implications to be test input by the user in the format 
+        :param independence_constraints: list of implications to be test input by the user in the format
         [(x,y,(z1,z2)),
         (x,y, (z3,))
         ]
         : returns: an instance of GraphRefuter class
         """
-        
+
         refuter = GraphRefuter(data = self._data, method_name= method_name)
 
         if independence_constraints is None:
@@ -498,14 +490,14 @@ class CausalModel:
                     if self._graph.check_dseparation([str(a)], [str(b)], k_list) == True :
                         self.logger.info(" %s and %s are CI given %s ", a, b, k_list)
                         conditional_independences.append([a, b, k_list])
-    
+
             res = refuter.refute_model(independence_constraints = conditional_independences)
 
         else:
             res = refuter.refute_model(independence_constraints = independence_constraints)
-        
+
         self.logger.info(refuter._refutation_passed)
-        
+
         return res
 
 

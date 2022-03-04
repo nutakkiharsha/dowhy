@@ -34,12 +34,12 @@ class CausalGraph:
 
         #re.sub only takes string parameter so the first if is to avoid error
         #if the input is a text file, convert the contained data into string
-        if isinstance(graph, str) and re.match(r".*\.txt" , str(graph)): 
+        if isinstance(graph, str) and re.match(r".*\.txt" , str(graph)):
             text_file = open(graph , "r")
             graph = text_file.read()
             text_file.close()
- 
-        if isinstance(graph, str) and re.match(r"^dag", graph):   #Convert daggity output to dot format 
+
+        if isinstance(graph, str) and re.match(r"^dag", graph):   #Convert daggity output to dot format
             graph = daggity_to_dot(graph)
 
         if isinstance(graph, str):
@@ -401,7 +401,7 @@ class CausalGraph:
 
         return observed_node_names
 
-    def get_instruments(self, treatment_nodes, outcome_nodes):
+    def get_instruments(self, treatment_nodes, outcome_nodes, include_unobserved):
         treatment_nodes = parse_state(treatment_nodes)
         outcome_nodes = parse_state(outcome_nodes)
         parents_treatment = set()
@@ -415,6 +415,9 @@ class CausalGraph:
         # [TODO: double check these work with multivariate implementation:]
         # Exclusion
         candidate_instruments = parents_treatment.difference(ancestors_outcome)
+        if not include_unobserved:
+            obs_nodes = self.get_all_nodes(include_unobserved=include_unobserved)
+            candidate_instruments = candidate_instruments.intersection(obs_nodes)
         self.logger.debug("Candidate instruments after satisfying exclusion: %s",
                           candidate_instruments)
         # As-if-random setup
@@ -456,6 +459,26 @@ class CausalGraph:
 
         '''
         return nx.convert_matrix.to_numpy_matrix(self._graph, *args, **kwargs)
+
+    def equiv_graph_without_unobserved(self):
+        '''
+        Creates the induced graph that removes the unobserved nodes and
+        creates a bidirectional edge instead.
+
+        Assumes that the unobserved variables are the exogenous variables.
+        If they are non-exogenous unobserved variables, then need an algorithm
+        similar to the algorithm for deriving admg (acyclic dirrected mixed graphs).
+        '''
+        new_graph = self._graph.copy()
+        for node_name in self._graph.nodes:
+            if self._graph.nodes[node_name]["observed"] != "yes":
+                children = self._graph.successors(node_name)
+                new_graph.remove_node(node_name)
+                for pair in itertools.combinations(children, 2):
+                    new_graph.add_edge(pair[0], pair[1], bidirectional=True)
+                    new_graph.add_edge(pair[1], pair[0], bidirectional=True)
+
+        return new_graph
 
     def check_valid_frontdoor_set(self, nodes1, nodes2, candidate_nodes,
             frontdoor_paths=None, new_graph = None,

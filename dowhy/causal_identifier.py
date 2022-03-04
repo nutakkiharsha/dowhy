@@ -1,12 +1,14 @@
 import copy
 import itertools
 import logging
+from abc import ABC, abstractmethod
 
 import sympy as sp
 import sympy.stats as spstats
 
 import dowhy.utils.cli_helpers as cli
 from dowhy.utils.api import parse_state
+from dowhy.causal_identifiers.id_identifier import IDIdentifier, IDExpression
 
 
 class CausalIdentifier:
@@ -72,64 +74,85 @@ class CausalIdentifier:
 
     def identify_ate_effect(self, optimize_backdoor):
         estimands_dict = {}
+        backdoor_variables_dict, default_backdoor_id = None, None
+        instrument_names = None
+        frontdoor_variables_names = None
         mediation_first_stage_confounders = None
         mediation_second_stage_confounders = None
+        # These are the default set of methods considered
+        # In a future version, allow user to specify this as an input
+        # method_name is an array supplied by user
+        temp_method_names = ["backdoor", "iv", "frontdoor"]
+        if self.method_name == "id-algorithm":
+            temp_method_names = parse_state(self.method_name)
+
         ### 1. BACKDOOR IDENTIFICATION
         # First, checking if there are any valid backdoor adjustment sets
-        if optimize_backdoor == False:
-            backdoor_sets = self.identify_backdoor(self.treatment_name, self.outcome_name)
-        else:
-            from dowhy.causal_identifiers.backdoor import Backdoor
-            path = Backdoor(self._graph._graph, self.treatment_name, self.outcome_name)
-            backdoor_sets = path.get_backdoor_vars()
-        estimands_dict, backdoor_variables_dict = self.build_backdoor_estimands_dict(
-                self.treatment_name,
-                self.outcome_name,
-                backdoor_sets,
-                estimands_dict)
-        # Setting default "backdoor" identification adjustment set
-        default_backdoor_id = self.get_default_backdoor_set_id(backdoor_variables_dict)
-        if len(backdoor_variables_dict) > 0:
-            estimands_dict["backdoor"] = estimands_dict.get(str(default_backdoor_id), None)
-            backdoor_variables_dict["backdoor"] = backdoor_variables_dict.get(str(default_backdoor_id), None)
-        else:
-            estimands_dict["backdoor"] = None
+        if "backdoor" in temp_method_names:
+            if optimize_backdoor == False:
+                backdoor_sets = self.identify_backdoor(self.treatment_name, self.outcome_name)
+            else:
+                from dowhy.causal_identifiers.backdoor import Backdoor
+                path = Backdoor(self._graph._graph, self.treatment_name, self.outcome_name)
+                backdoor_sets = path.get_backdoor_vars()
+            estimands_dict, backdoor_variables_dict = self.build_backdoor_estimands_dict(
+                    self.treatment_name,
+                    self.outcome_name,
+                    backdoor_sets,
+                    estimands_dict)
+            # Setting default "backdoor" identification adjustment set
+            default_backdoor_id = self.get_default_backdoor_set_id(backdoor_variables_dict)
+            if len(backdoor_variables_dict) > 0:
+                estimands_dict["backdoor"] = estimands_dict.get(str(default_backdoor_id), None)
+                backdoor_variables_dict["backdoor"] = backdoor_variables_dict.get(str(default_backdoor_id), None)
+            else:
+                estimands_dict["backdoor"] = None
+
         ### 2. INSTRUMENTAL VARIABLE IDENTIFICATION
-        # Now checking if there is also a valid iv estimand
-        instrument_names = self._graph.get_instruments(self.treatment_name,
-                                                       self.outcome_name)
-        self.logger.info("Instrumental variables for treatment and outcome:" +
-                         str(instrument_names))
-        if len(instrument_names) > 0:
-            iv_estimand_expr = self.construct_iv_estimand(
-                self.estimand_type,
-                self._graph.treatment_name,
-                self._graph.outcome_name,
-                instrument_names
-            )
-            self.logger.debug("Identified expression = " + str(iv_estimand_expr))
-            estimands_dict["iv"] = iv_estimand_expr
-        else:
-            estimands_dict["iv"] = None
+        # Now checking if there is also a valid iv estiman
+        if "iv" in temp_method_names:
+            instrument_names = self._graph.get_instruments(self.treatment_name,
+                                                           self.outcome_name,
+                                                           include_unobserved=False)
+            self.logger.info("Instrumental variables for treatment and outcome:" +
+                             str(instrument_names))
+            if len(instrument_names) > 0:
+                iv_estimand_expr = self.construct_iv_estimand(
+                    self.estimand_type,
+                    self._graph.treatment_name,
+                    self._graph.outcome_name,
+                    instrument_names
+                )
+                self.logger.debug("Identified expression = " + str(iv_estimand_expr))
+                estimands_dict["iv"] = iv_estimand_expr
+            else:
+                estimands_dict["iv"] = None
 
         ### 3. FRONTDOOR IDENTIFICATION
         # Now checking if there is a valid frontdoor variable
-        frontdoor_variables_names = self.identify_frontdoor()
-        self.logger.info("Frontdoor variables for treatment and outcome:" +
-                str(frontdoor_variables_names))
-        if len(frontdoor_variables_names) >0:
-            frontdoor_estimand_expr = self.construct_frontdoor_estimand(
-                self.estimand_type,
-                self._graph.treatment_name,
-                self._graph.outcome_name,
-                frontdoor_variables_names
-            )
-            self.logger.debug("Identified expression = " + str(frontdoor_estimand_expr))
-            estimands_dict["frontdoor"] = frontdoor_estimand_expr
-            mediation_first_stage_confounders = self.identify_mediation_first_stage_confounders(self.treatment_name, frontdoor_variables_names)
-            mediation_second_stage_confounders = self.identify_mediation_second_stage_confounders(frontdoor_variables_names, self.outcome_name)
-        else:
-            estimands_dict["frontdoor"] = None
+        if "frontdoor" in temp_method_names:
+            frontdoor_variables_names = self.identify_frontdoor()
+            self.logger.info("Frontdoor variables for treatment and outcome:" +
+                    str(frontdoor_variables_names))
+            if len(frontdoor_variables_names) >0:
+                frontdoor_estimand_expr = self.construct_frontdoor_estimand(
+                    self.estimand_type,
+                    self._graph.treatment_name,
+                    self._graph.outcome_name,
+                    frontdoor_variables_names
+                )
+                self.logger.debug("Identified expression = " + str(frontdoor_estimand_expr))
+                estimands_dict["frontdoor"] = frontdoor_estimand_expr
+                mediation_first_stage_confounders = self.identify_mediation_first_stage_confounders(self.treatment_name, frontdoor_variables_names)
+                mediation_second_stage_confounders = self.identify_mediation_second_stage_confounders(frontdoor_variables_names, self.outcome_name)
+            else:
+                estimands_dict["frontdoor"] = None
+
+        if "id-algorithm" in temp_method_names:
+            id_identifier = IDIdentifier(self._graph,
+                                           self.estimand_type)
+            id_expression = id_identifier.identify_effect()
+            estimands_dict["id-algorithm"] = id_expression
 
         # Finally returning the estimand object
         estimand = IdentifiedEstimand(
@@ -357,7 +380,9 @@ class CausalIdentifier:
             return None
 
         # Default set contains minimum possible number of instrumental variables, to prevent lowering variance in the treatment variable.
-        instrument_names = set(self._graph.get_instruments(self.treatment_name, self.outcome_name))
+        instrument_names = set(self._graph.get_instruments(self.treatment_name,
+                                                           self.outcome_name,
+                                                           include_unobserved=False))
         iv_count_dict = {key: len(set(bdoor_set).intersection(instrument_names)) for key, bdoor_set in backdoor_sets_dict.items()}
         min_iv_count = min(iv_count_dict.values())
         min_iv_keys = {key for key, iv_count in iv_count_dict.items() if iv_count == min_iv_count}
@@ -772,11 +797,31 @@ class IdentifiedEstimand:
             if v is None:
                 s += "No such variable(s) found!\n"
             else:
-                sp_expr_str = sp.pretty(v["estimand"], use_unicode=True)
-                s += "Estimand expression:\n{0}\n".format(sp_expr_str)
-                j = 1
-                for ass_name, ass_str in v["assumptions"].items():
-                    s += "Estimand assumption {0}, {1}: {2}\n".format(j, ass_name, ass_str)
-                    j += 1
+                if isinstance(v, IDExpression):
+                    sp_expr_str = str(v)
+                    s += "Estimand expression:\n{0}\n".format(sp_expr_str)
+                else:
+                    sp_expr_str = sp.pretty(v["estimand"], use_unicode=True)
+                    s += "Estimand expression:\n{0}\n".format(sp_expr_str)
+                    j = 1
+                    for ass_name, ass_str in v["assumptions"].items():
+                        s += "Estimand assumption {0}, {1}: {2}\n".format(j, ass_name, ass_str)
+                        j += 1
             i += 1
         return s
+
+class IdentifiedExpression:
+    def __init__(self):
+        self.expr = None
+
+class IdentificationMethod(ABC):
+    """
+    Abstract class for methods that compute identified expression.
+    """
+    def __init__(self, graph, estimand_type):
+        self.graph = graph
+        self.estimand_type = estimand_type
+
+    @abstractmethod
+    def identify_effect(self):
+        pass

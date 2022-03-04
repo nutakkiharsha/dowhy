@@ -3,13 +3,13 @@ import pandas as pd
 import networkx as nx
 from dowhy.utils.ordered_set import OrderedSet
 from dowhy.utils.graph_operations import find_c_components, induced_graph, find_ancestor
-from dowhy.causal_identifier import CausalIdentifier
+from dowhy.causal_identifier import IdentificationMethod, CausalIdentifier, IdentifiedExpression
 from dowhy.utils.api import parse_state
 
-class IDExpression:
+class IDExpression(IdentifiedExpression):
     """
     Class for storing a causal estimand, as a result of the identification step using the ID algorithm.
-    The object stores a list of estimators(self._product) whose porduct must be obtained and a list of variables (self._sum) over which the product must be marginalized.
+    The object stores a list of estimators(self._product) whose product must be obtained and a list of variables (self._sum) over which the product must be marginalized.
     """
     def __init__(self):
         self._product = []
@@ -83,34 +83,38 @@ class IDExpression:
         else:
             return string
 
-class IDIdentifier(CausalIdentifier):
+class IDIdentifier(IdentificationMethod):
 
-    def __init__(self, graph, estimand_type,
-            method_name = "default",
-            proceed_when_unidentifiable=None):
+    def __init__(self, graph, estimand_type):
         '''
         Class to perform identification using the ID algorithm.
 
         :param self: instance of the IDIdentifier class.
         :param estimand_type: Type of estimand ("nonparametric-ate", "nonparametric-nde" or "nonparametric-nie").
-        :param method_name: Identification method ("id-algorithm" in this case).
-        :param proceed_when_unidentifiable: If True, proceed with identification even in the presence of unobserved/missing variables.
         '''
 
-        super().__init__(graph, estimand_type, method_name, proceed_when_unidentifiable)
+        super().__init__(graph, estimand_type)
 
         if self.estimand_type != CausalIdentifier.NONPARAMETRIC_ATE:
-            raise Exception("The estimand type should be 'non-parametric ate' for the ID method type.")
+            raise Exception("The estimand type should be 'non-parametric ate' for the id-algorithm method.")
 
         self._treatment_names = OrderedSet(parse_state(graph.treatment_name))
         self._outcome_names = OrderedSet(parse_state(graph.outcome_name))
-        self._adjacency_matrix = graph.get_adjacency_matrix()
+        new_graph = graph.equiv_graph_without_unobserved()
+        self._adjacency_matrix_bidir = nx.convert_matrix.to_numpy_matrix(new_graph)
 
+
+        bidirectional_edges = [(a,b) for a, b, attrs in new_graph.edges(data=True)
+                if "bidirectional" in attrs]
+        new_dir_subgraph = new_graph.copy()
+        new_dir_subgraph.remove_edges_from(bidirectional_edges)
+        self._adjacency_matrix = nx.convert_matrix.to_numpy_matrix(new_dir_subgraph)
         try:
-            self._tsort_node_names = OrderedSet(list(nx.topological_sort(graph._graph))) # topological sorting of graph nodes
+            self._tsort_node_names = OrderedSet(list(nx.topological_sort(new_dir_subgraph))) # topological sorting of graph nodes
         except:
             raise Exception("The graph must be a directed acyclic graph (DAG).")
-        self._node_names = OrderedSet(graph._graph.nodes)
+        self._node_names = OrderedSet(new_graph.nodes)
+        print(self._tsort_node_names)
 
     def identify_effect(self, treatment_names=None, outcome_names=None, adjacency_matrix=None, node_names=None):
         '''
